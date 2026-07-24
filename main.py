@@ -1,71 +1,122 @@
-﻿"""FlyRank W2 · A1 — Task API (Stage 4: full CRUD)."""
+﻿"""
+FlyRank Internship · Backend Track · W2 A1
+In-memory Task API — full CRUD + Swagger UI.
+"""
+
+from __future__ import annotations
+
+from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
+from pydantic import BaseModel, Field
 
-app = FastAPI(title="Task API")
+app = FastAPI(
+    title="Task API",
+    version="1.0.0",
+    description=(
+        "FlyRank W2 · A1 — a small in-memory to-do API. "
+        "Data lives only in process memory: restart the server and everything resets. "
+        "Interactive docs: **/docs**."
+    ),
+    contact={"name": "FlyRank Backend Intern"},
+    license_info={"name": "MIT"},
+)
 
-tasks = [
+tasks: list[dict[str, Any]] = [
     {"id": 1, "title": "Draft SEO report outline for client onboarding", "done": False},
     {"id": 2, "title": "Review Crawl API response schemas", "done": True},
     {"id": 3, "title": "Ship Week 2 CRUD checkpoint curls", "done": False},
 ]
-next_id = 4
+next_id: int = 4
+
+
+class TaskOut(BaseModel):
+    id: int
+    title: str
+    done: bool
+
+
+class ErrorOut(BaseModel):
+    error: str
+
+
+class ApiInfo(BaseModel):
+    name: str
+    version: str
+    endpoints: list[str]
+
+
+class HealthOut(BaseModel):
+    status: str
 
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(_: Request, exc: RequestValidationError):
-    missing_title = any(
-        err.get("loc", [])[-1] == "title" and err.get("type") in {"missing", "string_too_short"}
-        for err in exc.errors()
-    )
-    if missing_title:
-        message = "title is required and must be a non-empty string"
-    else:
-        message = "Invalid request body"
-    return JSONResponse(status_code=400, content={"error": message})
+    errors = exc.errors()
+    for err in errors:
+        loc = err.get("loc", ())
+        field = loc[-1] if loc else None
+        if field == "title":
+            return JSONResponse(
+                status_code=400,
+                content={"error": "title is required and must be a non-empty string"},
+            )
+        if field == "done":
+            return JSONResponse(
+                status_code=400,
+                content={"error": "done must be a boolean"},
+            )
+    return JSONResponse(status_code=400, content={"error": "Invalid request body"})
 
 
-def find_task(task_id: int):
+def find_task(task_id: int) -> dict[str, Any] | None:
     for task in tasks:
         if task["id"] == task_id:
             return task
     return None
 
 
-@app.get("/")
-def root():
-    return {
-        "name": "Task API",
-        "version": "1.0",
-        "endpoints": ["/tasks"],
-    }
+def not_found(task_id: int) -> JSONResponse:
+    return JSONResponse(
+        status_code=404,
+        content={"error": f"Task {task_id} not found"},
+    )
 
 
-@app.get("/health")
-def health():
+@app.get("/", response_model=ApiInfo, tags=["meta"], summary="API front door",
+         description="Describes this API: name, version, and primary resource paths.")
+def root() -> dict[str, Any]:
+    return {"name": "Task API", "version": "1.0", "endpoints": ["/tasks"]}
+
+
+@app.get("/health", response_model=HealthOut, tags=["meta"], summary="Liveness check",
+         description="Returns ok when the server process is accepting requests.")
+def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.get("/tasks")
-def list_tasks():
+@app.get("/tasks", response_model=list[TaskOut], tags=["tasks"], summary="List tasks",
+         description="Returns every task currently held in memory.")
+def list_tasks() -> list[dict[str, Any]]:
     return tasks
 
 
-@app.get("/tasks/{task_id}")
-def get_task(task_id: int):
+@app.get("/tasks/{task_id}", response_model=TaskOut, tags=["tasks"], summary="Get one task",
+         description="Fetch a single task by path id. Unknown ids return 404 with a JSON error.",
+         responses={404: {"model": ErrorOut}})
+def get_task(task_id: int) -> dict[str, Any] | JSONResponse:
     task = find_task(task_id)
     if task is None:
-        return JSONResponse(
-            status_code=404,
-            content={"error": f"Task {task_id} not found"},
-        )
+        return not_found(task_id)
     return task
 
 
-@app.post("/tasks", status_code=201)
-async def create_task(request: Request):
+@app.post("/tasks", response_model=TaskOut, status_code=201, tags=["tasks"], summary="Create a task",
+          description="Creates a task with the next free id and done=false. Empty/missing title → 400.",
+          responses={400: {"model": ErrorOut}})
+async def create_task(request: Request) -> dict[str, Any] | JSONResponse:
     global next_id
     try:
         body = await request.json()
@@ -88,14 +139,13 @@ async def create_task(request: Request):
     return task
 
 
-@app.put("/tasks/{task_id}")
-async def update_task(task_id: int, request: Request):
+@app.put("/tasks/{task_id}", response_model=TaskOut, tags=["tasks"], summary="Update a task",
+         description="Updates title and/or done. Empty body or invalid fields → 400. Unknown id → 404.",
+         responses={400: {"model": ErrorOut}, 404: {"model": ErrorOut}})
+async def update_task(task_id: int, request: Request) -> dict[str, Any] | JSONResponse:
     task = find_task(task_id)
     if task is None:
-        return JSONResponse(
-            status_code=404,
-            content={"error": f"Task {task_id} not found"},
-        )
+        return not_found(task_id)
 
     try:
         body = await request.json()
@@ -135,13 +185,13 @@ async def update_task(task_id: int, request: Request):
     return task
 
 
-@app.delete("/tasks/{task_id}", status_code=204)
-def delete_task(task_id: int):
+@app.delete("/tasks/{task_id}", status_code=204, tags=["tasks"], summary="Delete a task",
+            description="Removes a task. Success returns 204 with an empty body. Unknown id → 404.",
+            responses={204: {"description": "Deleted"}, 404: {"model": ErrorOut}},
+            response_class=Response)
+def delete_task(task_id: int) -> Response | JSONResponse:
     task = find_task(task_id)
     if task is None:
-        return JSONResponse(
-            status_code=404,
-            content={"error": f"Task {task_id} not found"},
-        )
+        return not_found(task_id)
     tasks.remove(task)
     return Response(status_code=204)
