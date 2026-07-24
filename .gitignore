@@ -9,3 +9,8 @@ _pdf_extract.txt
 *.log
 .pytest_cache/
 .mypy_cache/
+_checkpoint.py
+create.json
+*.png.tmp
+W2 - Build your first CRUD API.pdf
+_pdf_extract.txt
