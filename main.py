@@ -1,8 +1,8 @@
-﻿"""FlyRank W2 · A1 — Task API (Stage 3: create with validation)."""
+﻿"""FlyRank W2 · A1 — Task API (Stage 4: full CRUD)."""
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 app = FastAPI(title="Task API")
 
@@ -27,6 +27,13 @@ async def validation_exception_handler(_: Request, exc: RequestValidationError):
     return JSONResponse(status_code=400, content={"error": message})
 
 
+def find_task(task_id: int):
+    for task in tasks:
+        if task["id"] == task_id:
+            return task
+    return None
+
+
 @app.get("/")
 def root():
     return {
@@ -48,13 +55,13 @@ def list_tasks():
 
 @app.get("/tasks/{task_id}")
 def get_task(task_id: int):
-    for task in tasks:
-        if task["id"] == task_id:
-            return task
-    return JSONResponse(
-        status_code=404,
-        content={"error": f"Task {task_id} not found"},
-    )
+    task = find_task(task_id)
+    if task is None:
+        return JSONResponse(
+            status_code=404,
+            content={"error": f"Task {task_id} not found"},
+        )
+    return task
 
 
 @app.post("/tasks", status_code=201)
@@ -79,3 +86,62 @@ async def create_task(request: Request):
     next_id += 1
     tasks.append(task)
     return task
+
+
+@app.put("/tasks/{task_id}")
+async def update_task(task_id: int, request: Request):
+    task = find_task(task_id)
+    if task is None:
+        return JSONResponse(
+            status_code=404,
+            content={"error": f"Task {task_id} not found"},
+        )
+
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse(status_code=400, content={"error": "Request body must be JSON"})
+
+    if not isinstance(body, dict) or not body:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Request body must include title and/or done"},
+        )
+
+    if "title" not in body and "done" not in body:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Request body must include title and/or done"},
+        )
+
+    if "title" in body:
+        title = body["title"]
+        if not isinstance(title, str) or not title.strip():
+            return JSONResponse(
+                status_code=400,
+                content={"error": "title must be a non-empty string"},
+            )
+        task["title"] = title.strip()
+
+    if "done" in body:
+        done = body["done"]
+        if not isinstance(done, bool):
+            return JSONResponse(
+                status_code=400,
+                content={"error": "done must be a boolean"},
+            )
+        task["done"] = done
+
+    return task
+
+
+@app.delete("/tasks/{task_id}", status_code=204)
+def delete_task(task_id: int):
+    task = find_task(task_id)
+    if task is None:
+        return JSONResponse(
+            status_code=404,
+            content={"error": f"Task {task_id} not found"},
+        )
+    tasks.remove(task)
+    return Response(status_code=204)
